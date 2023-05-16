@@ -1,0 +1,3 @@
+src/generated/nexus.ts
+dist
+service-account.json

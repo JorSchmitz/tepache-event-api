@@ -1,0 +1,943 @@
+image: alpine:latest
+
+variables:
+  POSTGRES_USER: user
+  POSTGRES_PASSWORD: testing-password
+  POSTGRES_ENABLED: "true"
+  POSTGRES_DB: $CI_ENVIRONMENT_SLUG
+
+stages:
+  - codequality
+  - build
+  - pretest
+  - test
+  # - review
+  # - dast
+  - staging
+  # - canary
+  - production-build
+  - production-deploy
+  # - cleanup
+
+build:
+  variables:
+    GIT_SUBMODULE_STRATEGY: recursive
+  stage: build
+  image: gcr.io/cloud-builders/kubectl
+  script:
+    - setup_docker
+    - build
+  only:
+    - branches
+
+unit-test:
+  image: node:12.14.1-alpine
+  services:
+    - docker:dind
+  stage: test
+  artifacts:
+    paths:
+    - test/unit-jest-run.json
+    expire_in: 1 week
+  script:
+    - unit_test
+  variables:
+    GIT_SUBMODULE_STRATEGY: recursive
+    STAGE: test
+  only:
+    refs:
+      - branches
+      - tags
+    kubernetes: active
+  except:
+    variables:
+      - $TEST_DISABLED
+acceptance-test:
+  image: node:12.14.1-alpine
+  services:
+    - docker:dind
+  stage: test
+  artifacts:
+    paths:
+    - test/acceptance-jest-run.json
+    expire_in: 1 week
+  script:
+    - acceptance_test
+  variables:
+    GIT_SUBMODULE_STRATEGY: recursive
+    STAGE: test
+  only:
+    refs:
+      - branches
+      - tags
+    kubernetes: active
+  except:
+    variables:
+      - $TEST_DISABLED
+
+# # test-prod: TODO: NOT this yet
+# #   image: docker
+# #   services:
+# #     - docker:dind
+# #   stage: test
+# #   script:
+# #     - BUCKET_SEED_NAME=$STAGING_SEED_NAME
+# #     - test $BUCKET_SEED_NAME
+# #   variables:
+# #     GIT_SUBMODULE_STRATEGY: recursive
+# #   only:
+# #     refs:
+# #       - master
+# #     kubernetes: active
+
+codequality:
+  stage: codequality
+  image: node:12.14.1-alpine
+  artifacts:
+    paths: [gl-code-quality-report.json]
+  script:
+    - codequality
+  only:
+    - branches
+    - tags
+
+license_management:
+  stage: pretest
+  image:
+    name: "registry.gitlab.com/gitlab-org/security-products/license-management:$CI_SERVER_VERSION_MAJOR-$CI_SERVER_VERSION_MINOR-stable"
+    entrypoint: [""]
+  allow_failure: true
+  script:
+    - license_management
+  artifacts:
+    paths: [gl-license-management-report.json]
+  only:
+    - /v(\d+\.)?(\d+\.)?(\*|\d+)$/
+    - master
+    - tags
+  except:
+    variables:
+      - $LICENSE_MANAGEMENT_DISABLED
+# container_scanning:
+#   stage: pretest
+#   image: google/cloud-sdk:alpine
+#   allow_failure: true
+#   services:
+#     - docker:stable-dind
+#   script:
+#     - setup_docker
+#     - apk add --no-cache py-pip curl docker
+#     - container_scanning
+#   artifacts:
+#     paths: [gl-container-scanning-report.json]
+#   only:
+#     - /v(\d+\.)?(\d+\.)?(\*|\d+)$/
+#     - master
+#     - tags
+#   except:
+#     variables:
+#       - $CONTAINER_SCANNING_DISABLED
+
+# dast:
+#   stage: dast
+#   allow_failure: true
+#   image: registry.gitlab.com/gitlab-org/security-products/zaproxy
+#   variables:
+#     POSTGRES_DB: "false"
+#   script:
+#     - dast
+#   artifacts:
+#     paths: [gl-dast-report.json]
+#   environment:
+#     name: review/$CI_COMMIT_REF_NAME
+#     url: http://$CI_PROJECT_NAME-$CI_ENVIRONMENT_SLUG.$AUTO_DEVOPS_DOMAIN
+#   only:
+#     - /v(\d+\.)?(\d+\.)?(\*|\d+)$/
+#     - master
+#     - tags
+#   except:
+#     refs:
+#       - master
+#     variables:
+#       - $DAST_DISABLED
+
+# # review: # TODO: maybe enable this after the main release
+# #   stage: review
+# #   variables:
+# #     STAGE: development
+# #     CLUSTER_NAME: development
+# #     ENABLE_GOOGLE_LOGGIN: "true"
+# #   script:
+# #     - check_kube_domain
+# #     - install_dependencies $DEVELOPMENT_HELM_VERSION
+# #     - kubectl_select_cluster $DEVELOPMENT_KUBERNETES_SERVER $DEVELOPMENT_KUBERNETES_TOKEN $DEVELOPMENT_KUBERNETES_CERT
+# #     - download_chart $AUTO_DEVOPS_CHART
+# #     - ensure_namespace
+# #     - install_tiller
+# #     - deploy
+# #   environment:
+# #     name: review/$CI_COMMIT_REF_NAME
+# #     url: http://$CI_PROJECT_PATH_SLUG-$CI_ENVIRONMENT_SLUG.$AUTO_DEVOPS_DOMAIN
+# #     on_stop: stop_review
+# #   only:
+# #     refs:
+# #       - branches
+# #     kubernetes: active
+# #   except:
+# #     - master
+
+# stop_review:
+#   stage: cleanup
+#   variables:
+#     GIT_STRATEGY: none
+#   script:
+#     - install_dependencies $DEVELOPMENT_HELM_VERSION
+#     - kubectl_select_cluster $DEVELOPMENT_KUBERNETES_SERVER $DEVELOPMENT_KUBERNETES_TOKEN $DEVELOPMENT_KUBERNETES_CERT
+#     - delete
+#   environment:
+#     name: review/$CI_COMMIT_REF_NAME
+#     action: stop
+#   when: manual
+#   allow_failure: true
+#   only:
+#     refs:
+#       - branches
+#     kubernetes: active
+#   except:
+#     - master
+
+staging:
+  stage: staging
+  variables:
+    STAGE: staging
+    CLUSTER_NAME: development
+    ENABLE_GOOGLE_LOGGIN: "true"
+  script:
+    - check_kube_domain
+    - install_dependencies $DEVELOPMENT_HELM_VERSION
+    - kubectl_select_cluster $DEVELOPMENT_KUBERNETES_SERVER $DEVELOPMENT_KUBERNETES_TOKEN $DEVELOPMENT_KUBERNETES_CERT
+    - download_chart $AUTO_DEVOPS_CHART_ISTIO
+    - ensure_namespace
+    - install_tiller
+    - set_staging_variables
+    - deploy_istio
+  environment:
+    name: staging
+    url: http://$CI_PROJECT_PATH_SLUG-staging.$AUTO_DEVOPS_DOMAIN
+  only:
+    refs:
+      - master
+    kubernetes: active
+
+production-build:
+  variables:
+    STAGE: production
+    GIT_SUBMODULE_STRATEGY: recursive
+  stage: production-build
+  image: gcr.io/cloud-builders/kubectl
+  script:
+    - setup_docker
+    - build
+  when: manual
+  allow_failure: false
+  only:
+    - master
+
+production-deploy:
+  stage: production-deploy
+  variables:
+    REPLICA_COUNT: "1"
+    STAGE: production
+    CLUSTER_NAME: production
+    ENABLE_GOOGLE_LOGGIN: "true"
+  script:
+    - check_kube_domain
+    - install_dependencies $PRODUCTION_HELM_VERSION
+    # - post_slack_message "Production pipeline of Server started"
+    - kubectl_select_cluster $PRODUCTION_KUBERNETES_SERVER $PRODUCTION_KUBERNETES_TOKEN $PRODUCTION_KUBERNETES_CERT
+    - download_chart $AUTO_DEVOPS_CHART_ISTIO
+    - ensure_namespace
+    - install_tiller
+    # - create_secret
+    # - set_production_variables
+    - deploy_istio_production
+  environment:
+    name: production/$CI_COMMIT_REF_NAME
+    url: http://notifications.$PRODUCTION_DOMAIN
+  only:
+    refs:
+      - master
+    kubernetes: active
+
+# # ---------------------------------------------------------------------------
+
+.auto_devops: &auto_devops |
+  # Auto DevOps variables and functions
+  [[ "$TRACE" ]] && set -x
+  auto_database_url=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${CI_ENVIRONMENT_SLUG}-postgres:5432/${POSTGRES_DB}
+  export DATABASE_URL=${DATABASE_URLZ-$auto_database_url}
+  echo "PRODUCTION_CI_REGISTRY_IMAGE $PRODUCTION_CI_REGISTRY_IMAGE"
+  echo "CI_REGISTRY_IMAGE $CI_REGISTRY_IMAGE"
+  echo "CI_PROJECT_NAME $CI_PROJECT_NAME"
+  echo "CI_COMMIT_REF_NAME $CI_COMMIT_REF_NAME"
+  export CI_APPLICATION_REPOSITORY=$CI_REGISTRY_IMAGE/$CI_PROJECT_NAME/$CI_COMMIT_REF_NAME/$CI_COMMIT_REF_SLUG
+  export CI_APPLICATION_TAG=$CI_COMMIT_SHA
+  export CI_CONTAINER_NAME=ci_job_build_${CI_JOB_ID}
+  export TILLER_NAMESPACE=$KUBE_NAMESPACE
+
+  if [[ "$STAGE" == "production" ]]; then
+    export CI_APPLICATION_REPOSITORY=$PRODUCTION_CI_REGISTRY_IMAGE/$CI_PROJECT_NAME/$CI_COMMIT_REF_NAME/$CI_COMMIT_REF_SLUG
+  fi
+
+  function setup_docker() {
+    if ! docker info &>/dev/null; then
+      if [ -z "$DOCKER_HOST" -a "$KUBERNETES_PORT" ]; then
+        export DOCKER_HOST='tcp://localhost:2375'
+      fi
+    fi
+  }
+
+  function setup_test_db() {
+    if [ -z ${KUBERNETES_PORT+x} ]; then
+      DB_HOST=postgres
+    else
+      DB_HOST=localhost
+    fi
+    export DATABASE_URL="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${DB_HOST}:5432/${POSTGRES_DB}"
+  }
+
+  function build() {
+    if [[ -n "$PROJECT_ID" ]]; then
+      echo "Google Auth Logging"
+      google_auth
+      echo ""
+    elif [[ -n "$CI_REGISTRY_USER" ]]; then
+      echo "Logging to GitLab Container Registry with CI credentials..."
+      docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+      echo ""
+    fi
+
+    if [[ -f Dockerfile ]]; then
+      echo "Fetching submodules..."
+      # git submodule update --init --recursive
+      echo "Building Dockerfile-based application..."
+      curl -k -o cloudbuild.yml https://gitlab.630lab.com/snippets/2/raw\?line_ending\=raw
+      echo "CI_APPLICATION_REPOSITORY  $CI_APPLICATION_REPOSITORY"
+      echo "CI_APPLICATION_TAG  $CI_APPLICATION_TAG"
+      gcloud builds submit --config cloudbuild.yml --substitutions _IMAGE=$CI_APPLICATION_REPOSITORY,_BUILD_ID=$CI_APPLICATION_TAG .
+    else
+      echo "Building Heroku-based application using gliderlabs/herokuish docker image..."
+      docker run -i --name="$CI_CONTAINER_NAME" -v "$(pwd):/tmp/app:ro" gliderlabs/herokuish /bin/herokuish buildpack build
+      docker commit "$CI_CONTAINER_NAME" "$CI_APPLICATION_REPOSITORY:$CI_APPLICATION_TAG"
+      docker rm "$CI_CONTAINER_NAME" >/dev/null
+      echo ""
+
+      echo "Configuring $CI_APPLICATION_REPOSITORY:$CI_APPLICATION_TAG docker image..."
+      docker create --expose 5000 --env PORT=5000 --name="$CI_CONTAINER_NAME" "$CI_APPLICATION_REPOSITORY:$CI_APPLICATION_TAG" /bin/herokuish procfile start web
+      docker commit "$CI_CONTAINER_NAME" "$CI_APPLICATION_REPOSITORY:$CI_APPLICATION_TAG"
+      docker rm "$CI_CONTAINER_NAME" >/dev/null
+      echo "Pushing to Gitlab Container Registry..."
+      docker push "$CI_APPLICATION_REPOSITORY:$CI_APPLICATION_TAG"
+      echo ""
+    fi
+    echo ""
+  }
+  function google_auth() {
+    mkdir -p /var/secrets/google/
+    if [[ "$STAGE" == "production" ]]; then
+      echo $PRODUCTION_SERVICE_ACCOUNT > /var/secrets/google/key.json
+      export GOOGLE_APPLICATION_CREDENTIALS=/var/secrets/google/key.json
+      gcloud config set project $PRODUCTION_PROJECT_ID
+      gcloud config set compute/zone $PRODUCTION_PROJECT_ZONE
+    else
+      echo $SERVICE_ACCOUNT > /var/secrets/google/key.json
+      export GOOGLE_APPLICATION_CREDENTIALS=/var/secrets/google/key.json
+      gcloud config set project $PROJECT_ID
+      gcloud config set compute/zone $PROJECT_ZONE
+    fi
+    gcloud auth activate-service-account --key-file=$GOOGLE_APPLICATION_CREDENTIALS
+  }
+  function codequality() {
+    apk update && apk add build-base gcc g++ git python make imagemagick nano --no-cache
+    npm i
+    npm run codequality
+    ls
+  }
+  function unit_test() {
+    apk update && apk add build-base gcc g++ git python make imagemagick nano --no-cache
+    npm i
+    npm run unit-test
+    ls
+  }
+  function acceptance_test() {
+    apk update && apk add build-base gcc g++ git python make imagemagick nano --no-cache
+    npm i
+    npm run acceptance-test
+    ls
+  }
+    function check_kube_domain() {
+    if [ -z ${AUTO_DEVOPS_DOMAIN+x} ]; then
+      echo "In order to deploy or use Review Apps, AUTO_DEVOPS_DOMAIN variable must be set"
+      echo "You can do it in Auto DevOps project settings or defining a secret variable at group or project level"
+      echo "You can also manually add it in .gitlab-ci.yml"
+      false
+    else
+      true
+    fi
+  }
+  function install_dependencies() {
+    apk add -U openssl curl tar gzip bash python3 ca-certificates git
+    wget -q -O /etc/apk/keys/sgerrand.rsa.pub https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub
+    wget https://github.com/sgerrand/alpine-pkg-glibc/releases/download/2.23-r3/glibc-2.23-r3.apk
+    apk add glibc-2.23-r3.apk
+    rm glibc-2.23-r3.apk
+
+    curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3
+    chmod 700 get_helm.sh
+    ./get_helm.sh
+    helm version --client
+    # TODO: make this dynamic again when it becomes stable k8s v1.10 with ($(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)) :)
+    curl -L -o /usr/bin/kubectl https://storage.googleapis.com/kubernetes-release/release/v1.9.2/bin/linux/amd64/kubectl
+    chmod +x /usr/bin/kubectl
+    kubectl version --client
+  }
+  function kubectl_select_cluster() {
+    KUBERNETES_SERVER=$1
+    KUBERNETES_CERT=$3
+    KUBERNETES_TOKEN=$2
+    echo "KUBERNETES_SERVER $KUBERNETES_SERVER"
+    echo "KUBERNETES_CERT $KUBERNETES_CERT"
+    echo "KUBERNETES_TOKEN $KUBERNETES_TOKEN"
+    echo "DEVELOPMENT_KUBERNETES_SERVER $DEVELOPMENT_KUBERNETES_SERVER"
+    echo "DEVELOPMENT_KUBERNETES_CERT $DEVELOPMENT_KUBERNETES_CERT"
+    echo "DEVELOPMENT_KUBERNETES_TOKEN $DEVELOPMENT_KUBERNETES_TOKEN"
+    echo "PRODUCTION_KUBERNETES_SERVER $PRODUCTION_KUBERNETES_SERVER"
+    echo "PRODUCTION_KUBERNETES_CERT $PRODUCTION_KUBERNETES_CERT"
+    echo "PRODUCTION_KUBERNETES_TOKEN $PRODUCTION_KUBERNETES_TOKEN"
+    echo "STAGE $STAGE"
+    if [[ ! -n "$KUBERNETES_SERVER" ]]; then
+      echo "the server url its needed (KUBERNETES_SERVER)"
+      return 1
+    fi
+    if [[ ! -n "$KUBERNETES_CERT" ]]; then
+      echo "the production kubernetes certificate its needed (KUBERNETES_CERT)"
+      return 1
+    fi
+    if [[ ! -n "$KUBERNETES_TOKEN" ]]; then
+      echo "the production kubernetes token its needed (KUBERNETES_TOKEN)"
+      return 1
+    fi
+    KUBE_NAMESPACE=default
+    TILLER_NAMESPACE=default
+    echo $KUBERNETES_CERT | base64 -d > /etc/cert.crt
+    env_stage=development
+    if [[ "$STAGE" == "production" ]]; then
+      env_stage=production
+    fi
+    kubectl config set-cluster $env_stage --server $KUBERNETES_SERVER --certificate-authority /etc/cert.crt
+    kubectl config set-credentials gitlab --token $KUBERNETES_TOKEN
+    kubectl config set-context $env_stage --cluster $env_stage --namespace $KUBE_NAMESPACE --user gitlab
+    kubectl config use-context $env_stage
+    kubectl config get-contexts
+    kubectl get pods
+  }
+  function download_chart() {
+    if [[ ! -d chart ]]; then
+      auto_chart=${1:-gitlab/auto-deploy-app}
+      auto_chart_name=$(basename $auto_chart)
+      auto_chart_name=${auto_chart_name%.tgz}
+    else
+      auto_chart="chart"
+      auto_chart_name="chart"
+    fi
+    helm repo add gitlab https://charts.gitlab.io
+    helm repo add charts-seistreinta https://charts-seistreinta.storage.googleapis.com
+    if [[ ! -d "$auto_chart" ]]; then
+      echo $auto_chart
+      echo $auto_chart_name
+      helm fetch ${auto_chart} --untar --version=2.1.11
+    fi
+    if [ "$auto_chart_name" != "chart" ]; then
+      mv ${auto_chart_name} chart
+    fi
+
+    helm dependency update chart/
+    helm dependency build chart/
+  }
+  function ensure_namespace() {
+    kubectl describe namespace "$KUBE_NAMESPACE" || kubectl create namespace "$KUBE_NAMESPACE"
+    create_role_binding
+  }
+  function create_role_binding() {
+    kubectl describe rolebinding gitlab-autodevops -n "$KUBE_NAMESPACE" || kubectl create rolebinding gitlab-autodevops --serviceaccount="$KUBE_NAMESPACE":default -n "$KUBE_NAMESPACE" --clusterrole=admin
+  }
+  function install_tiller() {
+    echo "Checking Tiller..."
+    helm ls --namespace kube-system
+    helm version --namespace kube-system
+    echo "Checking Tiller in namespace kube-system..."
+    if ! helm version --namespace kube-system --debug; then
+      echo "Failed to init Tiller."
+      return 1
+    fi
+    echo ""
+  }
+  set_staging_variables() {
+    for var in STAGING_DATABASE_URL
+    do
+        echo "this is vars -> $(eval echo \$$var)"
+        if [[ ! -n "$(eval echo \$$var)" ]]; then
+          echo "its needed $var"
+          exit 1
+        fi
+    done
+    export DATABASE_URL=$STAGING_DATABASE_URL
+  }
+  function deploy() {
+    track="${1-stable}"
+    name="$CI_PROJECT_PATH_SLUG-$CI_ENVIRONMENT_SLUG"
+    if [[ "$track" != "stable" ]]; then
+      name="$name-$track"
+    fi
+    if [[ ! -n "$REPLICA_COUNT" ]]; then
+      replicas="1"
+    else
+      replicas=$REPLICA_COUNT
+    fi
+    
+    service_enabled="false"
+    postgres_enabled="$POSTGRES_ENABLED"
+    # canary uses stable db
+    [[ "$track" == "canary" ]] && postgres_enabled="false"
+
+    env_track=$( echo $track | tr -s  '[:lower:]'  '[:upper:]' )
+    env_slug=$( echo ${CI_ENVIRONMENT_SLUG//-/_} | tr -s  '[:lower:]'  '[:upper:]' )
+
+    if [[ "$track" == "stable" ]]; then
+      # for stable track get number of replicas from `PRODUCTION_REPLICAS`
+      eval new_replicas=\$${env_slug}_REPLICAS
+      service_enabled="true"
+    else
+      # for all tracks get number of replicas from `CANARY_PRODUCTION_REPLICAS`
+      eval new_replicas=\$${env_track}_${env_slug}_REPLICAS
+    fi
+    if [[ -n "$new_replicas" ]]; then
+      replicas="$new_replicas"
+    fi
+    NPM_VERSION=$(cat package.json | python3 -m json.tool | grep version | awk '{print $2}')
+    FORMAT_NAME=${name:0:52}
+    kubectl get pods 
+    kubectl get namespaces;
+    helm upgrade --install \
+      --wait \
+      --namespace kube-system \
+      --namespace="$KUBE_NAMESPACE" \
+      --set service.enable="$service_enabled" \
+      --set releaseOverride="$CI_PROJECT_PATH_SLUG-$CI_ENVIRONMENT_SLUG" \
+      --set repository="$CI_APPLICATION_REPOSITORY" \
+      --set tag="$CI_APPLICATION_TAG" \
+      --set service.type=ClusterIP \
+      --set pullPolicy=IfNotPresent \
+      --set application.track="$track" \
+      --set replicaCount="$replicas" \
+      --version="$CI_PIPELINE_ID-$CI_JOB_ID" \
+      --set rollingUpdate.enable=false \
+      --set service.externalPort=5000 \
+      --set service.internalPort=5000 \
+      --set ingress.host="$CI_ENVIRONMENT_URL" \
+      --set ingress.gateway="$GATEWAY_NAME" \
+      --set ingress.tls=true \
+      --set ingress.enable=true \
+      --set service.url="$CI_ENVIRONMENT_URL" \
+      --set gcpServices.enable=true \
+      --set gcpServices.serviceAccount=$PROJECT_SERVICES_ACCOUNT \
+      --set resources.limits.memory=768Mi \
+      --set resources.limits.cpu=125m \
+      --set resources.requests.memory=512Mi \
+      --set resources.requests.cpu=100m \
+      --set replicas=false \
+      "$FORMAT_NAME" \
+      chart/
+  }
+  function deploy_istio() {
+    track="${1-stable}"
+    name="$CI_PROJECT_PATH_SLUG-$CI_ENVIRONMENT_SLUG"
+    if [[ "$track" != "stable" ]]; then
+      name="$name-$track"
+    fi
+    if [[ ! -n "$REPLICA_COUNT" ]]; then
+      replicas="1"
+    else
+      replicas=$REPLICA_COUNT
+    fi
+    
+    service_enabled="false"
+    postgres_enabled="$POSTGRES_ENABLED"
+    # canary uses stable db
+    [[ "$track" == "canary" ]] && postgres_enabled="false"
+
+    env_track=$( echo $track | tr -s  '[:lower:]'  '[:upper:]' )
+    env_slug=$( echo ${CI_ENVIRONMENT_SLUG//-/_} | tr -s  '[:lower:]'  '[:upper:]' )
+
+    if [[ "$track" == "stable" ]]; then
+      # for stable track get number of replicas from `PRODUCTION_REPLICAS`
+      eval new_replicas=\$${env_slug}_REPLICAS
+      service_enabled="true"
+    else
+      # for all tracks get number of replicas from `CANARY_PRODUCTION_REPLICAS`
+      eval new_replicas=\$${env_track}_${env_slug}_REPLICAS
+    fi
+    if [[ -n "$new_replicas" ]]; then
+      replicas="$new_replicas"
+    fi
+    # if [[ ! -n "$AUTH_ENDPOINT" ]]; then
+    #   echo "auth endpoint its needed (AUTH_ENDPOINT)"
+    #   return 1
+    # fi
+    # if [[ ! -n "$CONFIGMAP_NAME" ]]; then
+    #   echo "the configMap name its needed (CONFIGMAP_NAME)"
+    #   return 1
+    # fi
+    NPM_VERSION=$(cat package.json | python3 -m json.tool | grep version | awk '{print $2}')
+    FORMAT_NAME=${name:0:52}
+    kubectl get pods 
+    kubectl get namespaces
+    echo "release $CI_PROJECT_PATH_SLUG-$CI_ENVIRONMENT_SLUG"
+    echo "CI_APPLICATION_REPOSITORY $CI_APPLICATION_REPOSITORY"
+    echo "CI_APPLICATION_TAG $CI_APPLICATION_TAG"
+    echo "NPM_VERSION $NPM_VERSION"
+    echo "CI_ENVIRONMENT_URL $CI_ENVIRONMENT_URL"
+    echo "replicas $replicas"
+    echo "track $track"
+    echo "service_enabled $service_enabled"
+    echo "GATEWAY_NAME $GATEWAY_NAME"
+    echo "FORMAT_NAME $FORMAT_NAME"
+    ls chart
+    cat chart/Chart.yaml
+    helm upgrade --install \
+      --wait \
+      --namespace kube-system \
+      --namespace="$KUBE_NAMESPACE" \
+      --set service.enable="$service_enabled" \
+      --set releaseOverride="$CI_PROJECT_PATH_SLUG-$CI_ENVIRONMENT_SLUG" \
+      --set repository="$CI_APPLICATION_REPOSITORY" \
+      --set tag="$CI_APPLICATION_TAG" \
+      --set pullPolicy=IfNotPresent \
+      --set application.track="$track" \
+      --set replicaCount="$replicas" \
+      --version="$NPM_VERSION" \
+      --set rollingUpdate.enable=false \
+      --set service.externalPort=5000 \
+      --set service.internalPort=5000 \
+      --set ingress.host="$CI_ENVIRONMENT_URL" \
+      --set ingress.gateway="$GATEWAY_NAME" \
+      --set ingress.tls=true \
+      --set ingress.enable=true \
+      --set resources.limits.memory=768Mi \
+      --set resources.limits.cpu=125m \
+      --set resources.requests.memory=512Mi \
+      --set resources.requests.cpu=100m \
+      --set customEndpoints[0].exact=/graphql,customEndpoints[0].match=/graphql \
+      --set replicas=false \
+      --set gcpServices.enable=true \
+      --set gcpServices.serviceAccount=$PROJECT_SERVICES_ACCOUNT \
+      --set volumes.secrets[0].name=$PUBLIC_AUTH_PEM_NAME,volumes.secrets[0].mountPath=/etc/auth-public-cert/ \
+      --set env[0].name=DATABASE_URL,env[0].value=$DATABASE_URL \
+      --set env[1].name=PUBLIC_CERT_PATH,env[1].value=$PUBLIC_CERT_PATH \
+      --set env[2].name=AUTHORIZATION_SERVER_NAME,env[2].value=$AUTHORIZATION_SERVER_NAME \
+      --set env[3].name=PROJECT_ID,env[3].value=$PROJECT_ID \
+      --set env[4].name=GCS_BUCKET,env[4].value=$GCS_BUCKET \
+      --set env[5].name=SERVICE_TIMEZONE,env[5].value=$SERVICE_TIMEZONE \
+      --set env[6].name=STAGE,env[6].value=$STAGE \
+      --set env[7].name=MEMBERS_ENDPOINT,env[7].value=$MEMBERS_ENDPOINT \
+      --set env[8].name=NODE_ENV,env[8].value=$STAGE \
+      --set env[9].name=MANDRILL_URL,env[9].value=$MANDRILL_URL \
+      --set env[10].name=MANDRILL_API_KEY,env[10].value=$MANDRILL_API_KEY \
+      --set env[11].name=INPLACE_URL,env[11].value=$INPLACE_URL \
+      --set env[12].name=AUTHORIZATION_ENDPOINT,env[12].value=$AUTHORIZATION_ENDPOINT \
+      --set env[13].name=CLIENTS_ENDPOINT,env[13].value=$CLIENTS_ENDPOINT \
+      "$FORMAT_NAME" \
+      chart/
+  }
+  function deploy_istio_production() {
+    track="${1-stable}"
+    name="$CI_PROJECT_PATH_SLUG-$CI_ENVIRONMENT_SLUG"
+    if [[ "$track" != "stable" ]]; then
+      name="$name-$track"
+    fi
+    if [[ ! -n "$REPLICA_COUNT" ]]; then
+      replicas="1"
+    else
+      replicas=$REPLICA_COUNT
+    fi
+    
+    service_enabled="false"
+    postgres_enabled="$POSTGRES_ENABLED"
+    # canary uses stable db
+    [[ "$track" == "canary" ]] && postgres_enabled="false"
+
+    env_track=$( echo $track | tr -s  '[:lower:]'  '[:upper:]' )
+    env_slug=$( echo ${CI_ENVIRONMENT_SLUG//-/_} | tr -s  '[:lower:]'  '[:upper:]' )
+
+    if [[ "$track" == "stable" ]]; then
+      # for stable track get number of replicas from `PRODUCTION_REPLICAS`
+      eval new_replicas=\$${env_slug}_REPLICAS
+      service_enabled="true"
+    else
+      # for all tracks get number of replicas from `CANARY_PRODUCTION_REPLICAS`
+      eval new_replicas=\$${env_track}_${env_slug}_REPLICAS
+    fi
+    if [[ -n "$new_replicas" ]]; then
+      replicas="$new_replicas"
+    fi
+    # if [[ ! -n "$AUTH_ENDPOINT" ]]; then
+    #   echo "auth endpoint its needed (AUTH_ENDPOINT)"
+    #   return 1
+    # fi
+    # if [[ ! -n "$CONFIGMAP_NAME" ]]; then
+    #   echo "the configMap name its needed (CONFIGMAP_NAME)"
+    #   return 1
+    # fi
+    NPM_VERSION=$(cat package.json | python3 -m json.tool | grep version | awk '{print $2}')
+    FORMAT_NAME=${name:0:52}
+    kubectl get pods 
+    kubectl get namespaces
+    echo "release $CI_PROJECT_PATH_SLUG-$CI_ENVIRONMENT_SLUG"
+    echo "CI_APPLICATION_REPOSITORY $CI_APPLICATION_REPOSITORY"
+    echo "CI_APPLICATION_TAG $CI_APPLICATION_TAG"
+    echo "NPM_VERSION $NPM_VERSION"
+    echo "CI_ENVIRONMENT_URL $CI_ENVIRONMENT_URL"
+    echo "replicas $replicas"
+    echo "track $track"
+    echo "service_enabled $service_enabled"
+    echo "GATEWAY_NAME $PRODUCTION_GATEWAY_NAME"
+    echo "FORMAT_NAME $FORMAT_NAME"
+    ls chart
+    cat chart/Chart.yaml
+    helm upgrade --install \
+      --wait \
+      --namespace kube-system \
+      --namespace="$KUBE_NAMESPACE" \
+      --set service.enable="$service_enabled" \
+      --set releaseOverride="$CI_PROJECT_PATH_SLUG-$CI_ENVIRONMENT_SLUG" \
+      --set repository="$CI_APPLICATION_REPOSITORY" \
+      --set tag="$CI_APPLICATION_TAG" \
+      --set pullPolicy=IfNotPresent \
+      --set application.track="$track" \
+      --set replicaCount="$replicas" \
+      --version="$NPM_VERSION" \
+      --set rollingUpdate.enable=false \
+      --set service.externalPort=5000 \
+      --set service.internalPort=5000 \
+      --set ingress.host="$CI_ENVIRONMENT_URL" \
+      --set ingress.gateway="$PRODUCTION_GATEWAY_NAME" \
+      --set ingress.tls=true \
+      --set ingress.enable=true \
+      --set resources.limits.memory=768Mi \
+      --set resources.limits.cpu=125m \
+      --set resources.requests.memory=512Mi \
+      --set resources.requests.cpu=100m \
+      --set customEndpoints[0].exact=/graphql,customEndpoints[0].match=/graphql \
+      --set replicas=false \
+      --set gcpServices.enable=true \
+      --set gcpServices.serviceAccount=$PRODUCTION_PROJECT_SERVICES_ACCOUNT \
+      --set volumes.secrets[0].name=$PUBLIC_AUTH_PEM_NAME,volumes.secrets[0].mountPath=/etc/auth-public-cert/ \
+      --set env[0].name=DATABASE_URL,env[0].value=$PRODUCTION_DATABASE_URL \
+      --set env[1].name=PUBLIC_CERT_PATH,env[1].value=$PUBLIC_CERT_PATH \
+      --set env[2].name=AUTHORIZATION_SERVER_NAME,env[2].value=$AUTHORIZATION_SERVER_NAME \
+      --set env[3].name=PROJECT_ID,env[3].value=$PRODUCTION_PROJECT_ID \
+      --set env[4].name=GCS_BUCKET,env[4].value=$PRODUCTION_GCS_BUCKET \
+      --set env[5].name=SERVICE_TIMEZONE,env[5].value=$PRODUCTION_SERVICE_TIMEZONE \
+      --set env[6].name=STAGE,env[6].value=$STAGE \
+      --set env[7].name=MEMBERS_ENDPOINT,env[7].value=$PRODUCTION_MEMBERS_ENDPOINT \
+      --set env[8].name=NODE_ENV,env[8].value=$STAGE \
+      --set env[9].name=MANDRILL_URL,env[9].value=$PRODUCTION_MANDRILL_URL \
+      --set env[10].name=MANDRILL_API_KEY,env[10].value=$PRODUCTION_MANDRILL_API_KEY \
+      --set env[11].name=INPLACE_URL,env[11].value=$PRODUCTION_INPLACE_URL \
+      --set env[12].name=AUTHORIZATION_ENDPOINT,env[12].value=$PRODUCTION_AUTHORIZATION_ENDPOINT \
+      --set env[13].name=CLIENTS_ENDPOINT,env[13].value=$PRODUCTION_CLIENTS_ENDPOINT \
+      "$FORMAT_NAME" \
+      chart/
+  }
+  function license_management() {
+    /run.sh analyze .
+  }
+#   function codeclimate() {
+#     cc_opts="--env CODECLIMATE_CODE="$PWD" \
+#               --volume "$PWD":/code \
+#               --volume /var/run/docker.sock:/var/run/docker.sock \
+#               --volume /tmp/cc:/tmp/cc"
+
+#     docker run ${cc_opts} codeclimate/codeclimate:0.69.0 init
+#     docker run ${cc_opts} codeclimate/codeclimate:0.69.0 analyze -f json > codeclimate.json
+#   }
+
+#   function sast() {
+#     case "$CI_SERVER_VERSION" in
+#       *-ee)
+#         /app/bin/run "$@"
+#         ;;
+#       *)
+#         echo "GitLab EE is required"
+#         ;;
+#     esac
+#   }
+#   function registry_login() {
+#     if [[ -n "$PROJECT_ID" ]]; then
+#       echo "Google Auth Logging"
+#       google_auth
+#       echo ""
+#     elif [[ -n "$CI_REGISTRY_USER" ]]; then
+#       echo "Logging to GitLab Container Registry with CI credentials..."
+#       docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+#       echo ""
+#     fi
+#   }
+#   function dast() {
+#     mkdir /zap/wrk/
+#     /zap/zap-baseline.py -J gl-dast-report.json -t "$CI_ENVIRONMENT_URL" || true
+#     cp /zap/wrk/gl-dast-report.json .
+#   }
+#   function container_scanning() {
+#     registry_login
+#     docker run -d --name db arminc/clair-db:latest
+#     docker run -p 6060:6060 --link db:postgres -d --name clair --restart on-failure arminc/clair-local-scan:v2.0.1
+#     apk add -U wget ca-certificates
+#     gcloud auth configure-docker --quiet
+#     docker pull ${CI_APPLICATION_REPOSITORY}:${CI_APPLICATION_TAG}
+#     wget https://github.com/arminc/clair-scanner/releases/download/v8/clair-scanner_linux_amd64
+#     mv clair-scanner_linux_amd64 clair-scanner
+#     chmod +x clair-scanner
+#     touch clair-whitelist.yml
+#     retries=0
+#     echo "Waiting for clair daemon to start"
+#     while( ! wget -T 10 -q -O /dev/null http://localhost:6060/v1/namespaces ) ; do sleep 1 ; echo -n "." ; if [ $retries -eq 10 ] ; then echo " Timeout, aborting." ; exit 1 ; fi ; retries=$(($retries+1)) ; done
+#     ./clair-scanner -c http://localhost:6060 --ip $(hostname -i) -r gl-container-scanning-report.json -l clair.log -w clair-whitelist.yml ${CI_APPLICATION_REPOSITORY}:${CI_APPLICATION_TAG} || true
+#   }
+
+
+#   function set_production_variables() {
+#     for var in PRODUCTION_AUTH_ENDPOINT PRODUCTION_APP_SECRET PRODUCTION_GATEWAYS_SECRET PRODUCTION_DATABASE_URL  PRODUCTION_FACEBOOK_SYSTEM_USER_ACCESS_TOKEN
+
+#     do
+#         echo "this is vars -> $(eval echo \$$var)"
+#         if [[ ! -n "$(eval echo \$$var)" ]]; then
+#           echo "its needed $var"
+#           exit 1
+#         fi
+#     done
+#       export AUTH_ENDPOINT=$PRODUCTION_AUTH_ENDPOINT
+#       export AUTH_SECRET=$PRODUCTION_APP_SECRET
+#       export CLIENT_SECRET=$PRODUCTION_GATEWAYS_SECRET
+#       export DATABASE_URL=$PRODUCTION_DATABASE_URL
+#       export FACEBOOK_SYSTEM_USER_ACCESS_TOKEN=$PRODUCTION_FACEBOOK_SYSTEM_USER_ACCESS_TOKEN
+#   }
+#   function test() {
+#     npm i -g install prisma@1.34.0 jest@24.8.0 
+#     sed -i '$ d' database/prisma.yml
+#     echo 'endpoint: ${env:PRISMA_CLUSTER}/${env:PRISMA_SERVICE}/${env:PRISMA_STAGE}' >> database/prisma.yml
+#     cat database/prisma.yml
+#     service=test
+#     stage=test
+#     secret=Jye5Rutn33WASkR
+#     cluster=https://prisma-development.vendoj.630lab.com
+#     echo PRISMA_SECRET=$secret > .env
+#     echo PRISMA_SERVICE=$service >> .env
+#     echo PRISMA_STAGE=$stage >> .env
+#     echo PRISMA_CLUSTER=$cluster >> .env
+#     export PRISMA_SECRET=$secret
+#     export PRISMA_SERVICE=$service
+#     export PRISMA_STAGE=$stage
+#     export PRISMA_CLUSTER=$cluster
+#     export PRISMA_DATABASE_ENDPOINT=$cluster/$service/$stage
+#     cat .env
+#     pwd
+#     env
+#     prisma -v
+#     prisma reset -e .env -f; 
+#     prisma deploy -e .env;
+#     EXPORT_FILE=$(ls test | grep export)
+#     prisma import -e .env -d test/$EXPORT_FILE
+#     echo $PROJECT_SERVICES_ACCOUNT | base64 -d > test/sa.json
+#     export SERVER_ENDPOINT=localhost:5000
+#     npm ci
+#     npm rebuild
+#     npm run start-daemon
+#     sleep 20
+#     npm run test
+#     prisma reset -e .env -f
+#   }
+#   function test_deprecated() {
+#     setup_docker
+#     apk add --no-cache py-pip curl docker
+#     pip install 'docker-compose==1.22.0rc1'
+#     docker-compose --version
+#     PATH=/google-cloud-sdk/bin:$PATH
+#     CLOUD_SDK_VERSION=203.0.0
+#     wget https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-sdk-${CLOUD_SDK_VERSION}-linux-x86_64.tar.gz -P /
+#     tar xzf /google-cloud-sdk-${CLOUD_SDK_VERSION}-linux-x86_64.tar.gz -C /
+#     rm /google-cloud-sdk-${CLOUD_SDK_VERSION}-linux-x86_64.tar.gz
+#     google_auth
+#     gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin https://gcr.io
+#     docker-compose --version
+#     gcloud docker -- pull "$CI_APPLICATION_REPOSITORY:$CI_APPLICATION_TAG"
+#     echo $PROJECT_SERVICES_ACCOUNT | base64 -d > test/sa.json 
+#     yarn
+#     cd test/
+#     IMAGE="$CI_APPLICATION_REPOSITORY:$CI_APPLICATION_TAG" docker-compose up -d
+#     npm -g i prisma@1.34
+#     cd ..
+#     PRISMA_SECRET= PRISMA_SERVICE=development PRISMA_STAGE=local PRISMA_CLUSTER=localhost prisma deploy
+#     EXPORT_FILE=$(ls test | grep export)
+#     PRISMA_SECRET= PRISMA_SERVICE=development PRISMA_STAGE=local PRISMA_CLUSTER=localhost prisma import -d test/$EXPORT_FILE
+#     npm run test
+#   }
+#   function dependency_scanning() {
+#     case "$CI_SERVER_VERSION" in
+#       *-ee)
+#         docker run --env DEP_SCAN_DISABLE_REMOTE_CHECKS="${DEP_SCAN_DISABLE_REMOTE_CHECKS:-false}" \
+#                    --volume "$PWD:/code" \
+#                    --volume /var/run/docker.sock:/var/run/docker.sock \
+#                    "registry.gitlab.com/gitlab-org/security-products/dependency-scanning:$SP_VERSION" /code
+#         ;;
+#       *)
+#         echo "GitLab EE is required"
+#         ;;
+#     esac
+#   }
+
+  
+  
+#   function create_secret() {
+#     sleep 200000
+#     kubectl create secret -n "$KUBE_NAMESPACE" \
+#       docker-registry gitlab-registry \
+#       --docker-server="$CI_REGISTRY" \
+#       --docker-username="$CI_REGISTRY_USER" \
+#       --docker-password="$CI_REGISTRY_PASSWORD" \
+#       --docker-email="$GITLAB_USER_EMAIL" \
+#       -o yaml --dry-run | kubectl replace -n "$KUBE_NAMESPACE" --force -f -
+#   }
+
+#   function delete() {
+#     track="${1-stable}"
+#     name="$CI_PROJECT_PATH_SLUG-$CI_ENVIRONMENT_SLUG"
+#     if [[ "$track" != "stable" ]]; then
+#       name="$name-$track"
+#     fi
+#     FORMAT_NAME=${name:0:52}
+#     TILLER_NAMESPACE=kube-system
+#     echo "this is the helm name to delete $FORMAT_NAME"
+#     echo "this is the helm chart to delete $(helm ls -q "$FORMAT_NAME" --tiller-namespace $TILLER_NAMESPACE)"
+#     echo "this is the helm namespace chart to delete kube-system"
+#     if [[ -n "$(helm ls --tiller-namespace $TILLER_NAMESPACE -q "$FORMAT_NAME")" ]]; then
+#       full=$(helm ls -q "$FORMAT_NAME" --tiller-namespace $TILLER_NAMESPACE)
+#       helm del --purge "$full" --tiller-namespace $TILLER_NAMESPACE
+#     fi
+#   }
+#   function post_slack_message() {
+#     curl -X POST ${PRODUCTION_SLACK_ALVARIA_WEBHOOK} -H "accept: application/json" -d '{"text":'"\"$1\""',"channel":"#alvariaproduction","username":"webhookbot","mrkdwn": true}'
+#   }
+
+before_script:
+  - *auto_devops

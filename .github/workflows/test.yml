@@ -1,0 +1,39 @@
+name: Test
+
+on:
+  workflow_call:
+
+jobs:
+  codequality:
+    name: Code quality check
+    runs-on: self-hosted
+    container:
+      image: node:16-alpine
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Dependencies
+        run: npm i
+      - name: Run CodeQuality script
+        run: npm run codequality
+  build:
+    name: Build check
+    runs-on: self-hosted
+    container:
+      image: node:16-alpine
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Dependencies
+        run: npm i
+      - name: Run Build script
+        run: npm run build
+  test:
+    name: Test check
+    runs-on: self-hosted
+    container:
+      image: node:16-alpine
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Dependencies
+        run: npm i
+      - name: Run Tests script
+        run: npm run test
