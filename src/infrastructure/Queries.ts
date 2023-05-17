@@ -1,23 +1,37 @@
-import { queryType } from 'nexus';
-import { me } from '../application/queries/me';
-import { isAuthenticated } from './permissions';
+import { queryType } from 'nexus'
+import { me } from '../application/queries/me'
+import { isAuthenticated } from './permissions'
+import { events } from '../application/queries/events'
 
 export const queries = queryType({
   definition(query) {
     query.nullable.field('me', {
       type: 'User',
       args: {},
-      authorize: (_root, _args, ctx) =>
-        isAuthenticated(ctx),
+      authorize: (_root, _args, ctx) => isAuthenticated(ctx),
       async resolve(_root, _args, ctx) {
         try {
-          const { user } = ctx;
-          const response = await me({ user });
-          return response;
+          const { user } = ctx
+          const response = await me({ user })
+          return response
         } catch (e) {
-          return e;
+          return e
         }
       },
-    });
+    })
+
+    query.list.nonNull.field('events', {
+      type: 'Event',
+      args: {},
+      async resolve(_root, _args, ctx) {
+        try {
+          const { prisma } = ctx
+          const response = await events({ prisma })
+          return response
+        } catch (e) {
+          return e
+        }
+      },
+    })
   },
-});
+})

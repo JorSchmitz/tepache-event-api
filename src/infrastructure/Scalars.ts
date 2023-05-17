@@ -1,4 +1,4 @@
-import { scalarType } from 'nexus';
+import { scalarType } from 'nexus'
 
 export const scalars = [
   scalarType({
@@ -6,4 +6,9 @@ export const scalars = [
     asNexusMethod: 'json',
     description: 'JSON scalar type',
   }),
-];
+]
+
+import { asNexusMethod } from 'nexus'
+import { GraphQLDateTime } from 'graphql-scalars'
+
+export const GQLDate = asNexusMethod(GraphQLDateTime, 'dateTime')

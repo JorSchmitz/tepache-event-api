@@ -12,6 +12,10 @@ declare global {
      * JSON scalar type
      */
     json<FieldName extends string>(fieldName: FieldName, opts?: core.CommonInputFieldConfig<TypeName, FieldName>): void // "JSON";
+    /**
+     * A date-time string at UTC, such as 2007-12-03T10:15:30Z, compliant with the `date-time` format outlined in section 5.6 of the RFC 3339 profile of the ISO 8601 standard for representation of dates and times using the Gregorian calendar.
+     */
+    dateTime<FieldName extends string>(fieldName: FieldName, opts?: core.CommonInputFieldConfig<TypeName, FieldName>): void // "DateTime";
   }
 }
 declare global {
@@ -20,6 +24,10 @@ declare global {
      * JSON scalar type
      */
     json<FieldName extends string>(fieldName: FieldName, ...opts: core.ScalarOutSpread<TypeName, FieldName>): void // "JSON";
+    /**
+     * A date-time string at UTC, such as 2007-12-03T10:15:30Z, compliant with the `date-time` format outlined in section 5.6 of the RFC 3339 profile of the ISO 8601 standard for representation of dates and times using the Gregorian calendar.
+     */
+    dateTime<FieldName extends string>(fieldName: FieldName, ...opts: core.ScalarOutSpread<TypeName, FieldName>): void // "DateTime";
   }
 }
 
@@ -40,10 +48,21 @@ export interface NexusGenScalars {
   Float: number
   Boolean: boolean
   ID: string
+  DateTime: any
   JSON: any
 }
 
 export interface NexusGenObjects {
+  Event: { // root type
+    createdAt: NexusGenScalars['DateTime']; // DateTime!
+    description?: string | null; // String
+    end_time: NexusGenScalars['DateTime']; // DateTime!
+    id: string; // String!
+    location?: string | null; // String
+    start_time: NexusGenScalars['DateTime']; // DateTime!
+    title: string; // String!
+    updatedAt: NexusGenScalars['DateTime']; // DateTime!
+  }
   Mutation: {};
   Query: {};
   User: { // root type
@@ -66,10 +85,21 @@ export type NexusGenRootTypes = NexusGenObjects
 export type NexusGenAllTypes = NexusGenRootTypes & NexusGenScalars
 
 export interface NexusGenFieldTypes {
+  Event: { // field return type
+    createdAt: NexusGenScalars['DateTime']; // DateTime!
+    description: string | null; // String
+    end_time: NexusGenScalars['DateTime']; // DateTime!
+    id: string; // String!
+    location: string | null; // String
+    start_time: NexusGenScalars['DateTime']; // DateTime!
+    title: string; // String!
+    updatedAt: NexusGenScalars['DateTime']; // DateTime!
+  }
   Mutation: { // field return type
-    example: string | null; // String
+    createEvent: NexusGenRootTypes['Event'] | null; // Event
   }
   Query: { // field return type
+    events: NexusGenRootTypes['Event'][] | null; // [Event!]
     me: NexusGenRootTypes['User'] | null; // User
   }
   User: { // field return type
@@ -82,10 +112,21 @@ export interface NexusGenFieldTypes {
 }
 
 export interface NexusGenFieldTypeNames {
+  Event: { // field return type name
+    createdAt: 'DateTime'
+    description: 'String'
+    end_time: 'DateTime'
+    id: 'String'
+    location: 'String'
+    start_time: 'DateTime'
+    title: 'String'
+    updatedAt: 'DateTime'
+  }
   Mutation: { // field return type name
-    example: 'String'
+    createEvent: 'Event'
   }
   Query: { // field return type name
+    events: 'Event'
     me: 'User'
   }
   User: { // field return type name
@@ -99,8 +140,12 @@ export interface NexusGenFieldTypeNames {
 
 export interface NexusGenArgTypes {
   Mutation: {
-    example: { // args
-      token: string; // String!
+    createEvent: { // args
+      description?: string | null; // String
+      end_time: NexusGenScalars['DateTime']; // DateTime!
+      location?: string | null; // String
+      start_time: NexusGenScalars['DateTime']; // DateTime!
+      title: string; // String!
     }
   }
 }
