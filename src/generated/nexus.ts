@@ -99,6 +99,7 @@ export interface NexusGenFieldTypes {
     createEvent: NexusGenRootTypes['Event'] | null; // Event
   }
   Query: { // field return type
+    event: NexusGenRootTypes['Event'] | null; // Event
     events: NexusGenRootTypes['Event'][] | null; // [Event!]
     me: NexusGenRootTypes['User'] | null; // User
   }
@@ -126,6 +127,7 @@ export interface NexusGenFieldTypeNames {
     createEvent: 'Event'
   }
   Query: { // field return type name
+    event: 'Event'
     events: 'Event'
     me: 'User'
   }
@@ -146,6 +148,11 @@ export interface NexusGenArgTypes {
       location?: string | null; // String
       start_time: NexusGenScalars['DateTime']; // DateTime!
       title: string; // String!
+    }
+  }
+  Query: {
+    event: { // args
+      id: string; // String!
     }
   }
 }

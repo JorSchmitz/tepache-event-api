@@ -26,6 +26,7 @@ type Mutation {
 }
 
 type Query {
+  event(id: String!): Event
   events: [Event!]
   me: User
 }

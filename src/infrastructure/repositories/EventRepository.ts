@@ -26,4 +26,21 @@ export class EventRepository {
     })
     return EventFactory.createFromPrisma(eventCreated)
   }
+
+  async getEventById(id: string): Promise<Event | null> {
+    const event = await this.client.event.findFirst({
+      where: { id: id },
+    })
+    if (!event) return null
+    return EventFactory.createFromPrisma(event)
+  }
+
+  // async updateEvent(event: Event): Promise<Event | null> {
+  //   const eventUpdated = await this.client.event.update({
+  //     where: {id: event.snapshot.id},
+  //     data: {
+
+  //     }
+  //   })
+  // }
 }
