@@ -23,6 +23,7 @@ scalar JSON
 
 type Mutation {
   createEvent(description: String, end_time: DateTime!, location: String, start_time: DateTime!, title: String!): Event
+  updateEvent(description: String, end_time: DateTime, id: String!, location: String, start_time: DateTime, title: String): Event
 }
 
 type Query {

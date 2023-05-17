@@ -35,12 +35,17 @@ export class EventRepository {
     return EventFactory.createFromPrisma(event)
   }
 
-  // async updateEvent(event: Event): Promise<Event | null> {
-  //   const eventUpdated = await this.client.event.update({
-  //     where: {id: event.snapshot.id},
-  //     data: {
-
-  //     }
-  //   })
-  // }
+  async update(id: string, event: Event): Promise<Event | null> {
+    const eventUpdated = await this.client.event.update({
+      where: { id: id },
+      data: {
+        title: event.snapshot.title,
+        description: event.snapshot.description,
+        start_time: event.snapshot.start_time,
+        end_time: event.snapshot.end_time,
+        location: event.snapshot.location,
+      },
+    })
+    return EventFactory.createFromPrisma(eventUpdated)
+  }
 }

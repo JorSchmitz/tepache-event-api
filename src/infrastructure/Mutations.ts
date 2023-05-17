@@ -26,6 +26,7 @@
 
 import { extendType, stringArg, nonNull, arg, nullable } from 'nexus'
 import { createEvent } from '../application/businessCases/createEvent'
+import { updateEvent } from '../application/businessCases/updateEvent'
 
 export const mutations = extendType({
   type: 'Mutation',
@@ -45,6 +46,37 @@ export const mutations = extendType({
           const { title, description, start_time, end_time, location } = args
           const response = await createEvent({
             prisma,
+            title,
+            description,
+            start_time,
+            end_time,
+            location,
+          })
+          return response
+        } catch (e) {
+          return e
+        }
+      },
+    })
+
+    mutation.nullable.field('updateEvent', {
+      type: 'Event',
+      args: {
+        id: nonNull(stringArg()),
+        title: nullable(stringArg()),
+        description: nullable(stringArg()),
+        start_time: nullable(arg({ type: 'DateTime' })),
+        end_time: nullable(arg({ type: 'DateTime' })),
+        location: nullable(stringArg()),
+      },
+      async resolve(_root, _args, ctx) {
+        try {
+          const { prisma } = ctx
+          const { id, title, description, start_time, end_time, location } =
+            _args
+          const response = await updateEvent({
+            prisma,
+            id,
             title,
             description,
             start_time,
